@@ -45,7 +45,7 @@ static unsigned long impulsesampleseperation = 0;
 
 #define FCOUNT 25
 
-#define TANKFOLDS 20
+#define TANKFOLDS 30
 
 
 #define MAX_ROOM_SIZE 50
@@ -207,7 +207,7 @@ runStereoEffect(LADSPA_Handle Instance,
 
   if (prev_decay != fDecay || prev_echoscale != fEchoScale || prev_detail != fDetail){
     for (int i = 0; i < fDetail; i++){
-        float tfactd =  fEchoScale * expf(-(fDecay)*(i+1)*0.5);
+        float tfactd =  fEchoScale * expf(-(fDecay)*(i+1)*0.15);
         reverbimpulses[i] = tfactd;
     }
     prev_echoscale = fEchoScale;
@@ -473,7 +473,7 @@ ON_LOAD_ROUTINE {
       psPortRangeHints[AMP_DECAY].LowerBound
         = 1;
       psPortRangeHints[AMP_DECAY].UpperBound
-        = 5;
+        = 10;
 
       psPortRangeHints[AMP_ECHOSCALE].LowerBound
         = 0;
