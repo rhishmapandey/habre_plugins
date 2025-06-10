@@ -47,7 +47,6 @@ static unsigned long impulsesampleseperation = 0;
 
 #define TANKFOLDS 30
 
-
 #define MAX_ROOM_SIZE 50
 
 
@@ -246,7 +245,7 @@ runStereoEffect(LADSPA_Handle Instance,
                 revfac += reverbimpulses[k]*samplebuffer1[saminc1 - reflectiontraceindex];
             }
             else {
-                revfac += reverbimpulses[k]*samplebuffer1[rate*TANKFOLDS-reflectiontraceindex];
+                revfac += reverbimpulses[k]*samplebuffer1[rate*TANKFOLDS-(reflectiontraceindex - saminc1)];
             }
         }
         else{
@@ -285,7 +284,7 @@ runStereoEffect(LADSPA_Handle Instance,
                 revfac += reverbimpulses[k]*samplebuffer2[saminc2 - reflectiontraceindex];
             }
             else {
-                revfac += reverbimpulses[k]*samplebuffer2[rate*TANKFOLDS-reflectiontraceindex];
+                revfac += reverbimpulses[k]*samplebuffer2[rate*TANKFOLDS-(reflectiontraceindex - saminc2)];
             }
         }
         else{
