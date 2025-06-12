@@ -10,6 +10,7 @@ $(PLUGINS):
 	gcc $(CFLAGS) -c $@.c -o $@.o
 	gcc $(LDFLAGS) -o $@.so $@.o
 	rm -f $@.o
+	mv $@.so bin/
 
 clean:
 	rm -f *.o *.so
