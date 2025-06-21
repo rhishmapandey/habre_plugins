@@ -15,32 +15,30 @@
 #define AMP_THH 5
 
 #define AMP_PORTS_COUNT 6
+#define FCOUNT 25
+
 /*****************************************************************************/
 
 /* The structure used to hold port connection information and state
    (actually gain controls require no further state). */
-static unsigned int rate;
-static unsigned long saminc;
-
-#define FCOUNT 25
-
-static float ps1[FCOUNT];
-static float ps2[FCOUNT];
-float* facs;
-SLIB_SAMPLES magResponse;
-float prev_freq = -9999;
-
-typedef struct {
-
-  /* Ports:
+   
+   
+   typedef struct {
+     /* Ports:
      ------ */
-
-  LADSPA_Data * m_pfControlValue;
-  LADSPA_Data * m_pfTHHFreq;
-  LADSPA_Data * m_pfInputBuffer1;
-  LADSPA_Data * m_pfOutputBuffer1;
-  LADSPA_Data * m_pfInputBuffer2;  /* (Not used for mono) */
-  LADSPA_Data * m_pfOutputBuffer2; /* (Not used for mono) */
+    LADSPA_Data * m_pfControlValue;
+    LADSPA_Data * m_pfTHHFreq;
+    LADSPA_Data * m_pfInputBuffer1;
+    LADSPA_Data * m_pfOutputBuffer1;
+    LADSPA_Data * m_pfInputBuffer2;  /* (Not used for mono) */
+    LADSPA_Data * m_pfOutputBuffer2; /* (Not used for mono) */
+    float* ps2;
+    float* ps1;
+    float* facs;
+    SLIB_SAMPLES magResponse;
+    float prev_freq;
+    unsigned int rate;
+    unsigned long saminc;
 
 } Amplifier;
 
@@ -51,16 +49,20 @@ typedef struct {
 static LADSPA_Handle
 instantiateAmplifier(const LADSPA_Descriptor * Descriptor,
 		     unsigned long               SampleRate){
-  rate  = SampleRate;
-  saminc = 0;
-  facs = (float*)malloc(sizeof(float)*FCOUNT);
-  magResponse.asamples = (float*)malloc(sizeof(float)*SampleRate);
-  magResponse.length = SampleRate;
+  Amplifier *amp = (Amplifier*)malloc(  sizeof(Amplifier));
+  amp->rate  = SampleRate;
+  amp->saminc = 0;
+  amp->ps1 = (float*)malloc(sizeof(float)*FCOUNT);
+  amp->ps2 = (float*)malloc(sizeof(float)*FCOUNT);
+  amp->facs = (float*)malloc(sizeof(float)*FCOUNT);
+  amp->magResponse.asamples = (float*)malloc(sizeof(float)*SampleRate);
+  amp->magResponse.length = SampleRate;
   for (int i = 0; i < FCOUNT; i++) {
-    ps1[0] = 0.0;
-    ps2[0] = 0.0;
+    amp->ps1[i] = 0.0;
+    amp->ps2[i] = 0.0;
   }
-  return malloc(  sizeof(Amplifier));
+  amp->prev_freq= -9999;
+  return amp;
 }
 
 /*****************************************************************************/
@@ -116,19 +118,19 @@ runStereoEffect(LADSPA_Handle Instance,
   //gain knob logrithemic through input hint!
   fGain = *(psAmplifier->m_pfControlValue);
   fTHH = *(psAmplifier->m_pfTHHFreq);
-  if (saminc > rate){
-    saminc = (saminc) - rate;
+  if (psAmplifier->saminc > psAmplifier->rate){
+    psAmplifier->saminc = (psAmplifier->saminc) - psAmplifier->rate;
   }
 
-  if (prev_freq != fTHH){
-    for (int i = 0; i <  magResponse.length/2; i++){
+  if (psAmplifier->prev_freq != fTHH){
+    for (int i = 0; i <  psAmplifier->magResponse.length/2; i++){
         float vala = 0.0;
         if (i > (int)fTHH) vala = 1.0;
-        magResponse.asamples[i] = vala;
-        magResponse.asamples[magResponse.length - i - 1] = vala;
+        psAmplifier->magResponse.asamples[i] = vala;
+        psAmplifier->magResponse.asamples[psAmplifier->magResponse.length - i - 1] = vala;
     }
-    getFirCofficients(&magResponse, &facs, FCOUNT);
-    prev_freq = fTHH;
+    getFirCofficients(&psAmplifier->magResponse, &psAmplifier->facs, FCOUNT);
+    psAmplifier->prev_freq = fTHH;
   }
 
 
@@ -139,11 +141,11 @@ runStereoEffect(LADSPA_Handle Instance,
   for (lSampleIndex = 0; lSampleIndex < SampleCount; lSampleIndex++){
     float val1 = 0;
     for (int i=0; i < (FCOUNT-1); i++) {
-        val1 += facs[i] * ps1[i];
-        ps1[i] = ps1[i+1];
+        val1 += psAmplifier->facs[i] * psAmplifier->ps1[i];
+        psAmplifier->ps1[i] = psAmplifier->ps1[i+1];
     }
-    ps1[FCOUNT-1] = pfInput[lSampleIndex];
-    val1 += facs[FCOUNT-1]*pfInput[lSampleIndex];
+    psAmplifier->ps1[FCOUNT-1] = pfInput[lSampleIndex];
+    val1 += psAmplifier->facs[FCOUNT-1]*pfInput[lSampleIndex];
         pfOutput[lSampleIndex] = fGain*val1;
   }
   pfInput = psAmplifier->m_pfInputBuffer2;
@@ -151,22 +153,26 @@ runStereoEffect(LADSPA_Handle Instance,
   for (lSampleIndex = 0; lSampleIndex < SampleCount; lSampleIndex++){
     float val2 = 0;
     for (int i=0; i < (FCOUNT-1); i++) {
-        val2 += facs[i] * ps2[i];
-        ps2[i] = ps2[i+1];
+        val2 += psAmplifier->facs[i] * psAmplifier->ps2[i];
+        psAmplifier->ps2[i] = psAmplifier->ps2[i+1];
     }
-    ps2[FCOUNT-1] = pfInput[lSampleIndex];
-    val2 += facs[FCOUNT-1]*pfInput[lSampleIndex];
+    psAmplifier->ps2[FCOUNT-1] = pfInput[lSampleIndex];
+    val2 += psAmplifier->facs[FCOUNT-1]*pfInput[lSampleIndex];
     pfOutput[lSampleIndex] = fGain*val2;
   }
-  saminc += SampleCount;
+  psAmplifier->saminc += SampleCount;
 }
 
 /* Throw away an amplifier. */
 static void
 cleanupAmplifier(LADSPA_Handle Instance) {
-  free(Instance);
+  Amplifier* camp = (Amplifier*)Instance;
+  free(camp->ps1);
+  free(camp->ps2);
+  free(camp->facs);
+  free(camp->magResponse.asamples);
+  free(camp);
 }
-
 /*****************************************************************************/
 
 LADSPA_Descriptor * g_psStereoDescriptor = NULL;
@@ -302,8 +308,6 @@ deleteDescriptor(LADSPA_Descriptor * psDescriptor) {
     free((char **)psDescriptor->PortNames);
     free((LADSPA_PortRangeHint *)psDescriptor->PortRangeHints);
     free(psDescriptor);
-    free(facs);
-    free(magResponse.asamples);
   }
 }
 /*****************************************************************************/

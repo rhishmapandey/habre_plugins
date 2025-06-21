@@ -21,91 +21,105 @@
 #define AMP_ECHOSCALE 9
 #define AMP_ROOMSIZE 10
 #define AMP_MIX 11
-
 #define AMP_PORTS_COUNT 12
+
+#define FCOUNT 25
+#define TANKFOLDS 30
+#define MAX_ROOM_SIZE 50
+#define AMP_MAX_REVERB_DETAIL 100
 /*****************************************************************************/
 
-#define AMP_MAX_REVERB_DETAIL 100
 
 
 
 /* The structure used to hold port connection information and state
    (actually gain controls require no further state). */
-static unsigned int rate;
-static unsigned long saminc1 = 0;
-static unsigned long saminc2 = 0;
-
-static float* samplebuffer1;
-static float* samplebuffer2;
-static float* reverbimpulses;
-
-static int prevfilled1 = 0;
-static int prevfilled2 = 0;
-static unsigned long impulsesampleseperation = 0;
-
-#define FCOUNT 25
-
-#define TANKFOLDS 30
-
-#define MAX_ROOM_SIZE 50
-
-
-static float ps1[FCOUNT];
-static float ps2[FCOUNT];
-float* facs;
-SLIB_SAMPLES magResponse;
-
-float prev_freq1 = -9999;
-float prev_freq2 = -9999;
-float prev_decay = -9999;
-float prev_echoscale = -9999;
-float prev_roomsize = -9999;
-float prev_mix = -9999;
-float prev_detail = -9999;
-
-typedef struct {
-
-  /* Ports:
+   
+   
+   
+   
+   
+   typedef struct {
+     
+     /* Ports:
      ------ */
+     LADSPA_Data * m_pfControlValue;
+     LADSPA_Data * m_pfTHLFreq;
+     LADSPA_Data * m_pfTHHFreq;
+     LADSPA_Data * m_pfDetail;
+     LADSPA_Data * m_pfDecay;
+     LADSPA_Data * m_pfEchoScale;
+     LADSPA_Data * m_pfRoomSize;
+     LADSPA_Data * m_pfMix;
+     LADSPA_Data * m_pfInputBuffer1;
+     LADSPA_Data * m_pfOutputBuffer1;
+     LADSPA_Data * m_pfInputBuffer2;  /* (Not used for mono) */
+     LADSPA_Data * m_pfOutputBuffer2; /* (Not used for mono) */
+     unsigned int rate;
+     unsigned long saminc1;
+     unsigned long saminc2;
+     float* samplebuffer1;
+     float* samplebuffer2;
+     float* reverbimpulses;
+     int prevfilled1;
+     int prevfilled2;
+     unsigned long impulsesampleseperation;
+     
+     float prev_freq1;
+     float prev_freq2;
+     float prev_decay;
+     float prev_echoscale;
+     float prev_roomsize;
+     float prev_mix;
+     float prev_detail;
 
-  LADSPA_Data * m_pfControlValue;
-  LADSPA_Data * m_pfTHLFreq;
-  LADSPA_Data * m_pfTHHFreq;
-  LADSPA_Data * m_pfDetail;
-  LADSPA_Data * m_pfDecay;
-  LADSPA_Data * m_pfEchoScale;
-  LADSPA_Data * m_pfRoomSize;
-  LADSPA_Data * m_pfMix;
-  LADSPA_Data * m_pfInputBuffer1;
-  LADSPA_Data * m_pfOutputBuffer1;
-  LADSPA_Data * m_pfInputBuffer2;  /* (Not used for mono) */
-  LADSPA_Data * m_pfOutputBuffer2; /* (Not used for mono) */
-
-} Amplifier;
-
-
+     float* ps1;
+     float* ps2;
+     float* facs;
+     SLIB_SAMPLES magResponse;
+     
+    } Amplifier;
+    
+    
 /*****************************************************************************/
 
 /* Construct a new plugin instance. */
 static LADSPA_Handle
 instantiateAmplifier(const LADSPA_Descriptor * Descriptor,
 		     unsigned long               SampleRate){
-  rate  = SampleRate;
-  facs = (float*)malloc(sizeof(float)*FCOUNT);
-  magResponse.asamples = (float*)malloc(sizeof(float)*SampleRate);
-  magResponse.length = SampleRate;
+  Amplifier *amp = (Amplifier*)malloc(  sizeof(Amplifier));
+  amp->rate  = SampleRate;
+  amp->ps1 = (float*)malloc(sizeof(float)*FCOUNT);
+  amp->ps2 = (float*)malloc(sizeof(float)*FCOUNT);
+  amp->facs = (float*)malloc(sizeof(float)*FCOUNT);
+  amp->magResponse.asamples = (float*)malloc(sizeof(float)*SampleRate);
+  amp->magResponse.length = SampleRate;
   for (int i = 0; i < FCOUNT; i++) {
-    ps1[0] = 0.0;
-    ps2[0] = 0.0;
+    amp->ps1[i] = 0.0;
+    amp->ps2[i] = 0.0;
   }
-  samplebuffer1 = (float*)malloc(sizeof(float)*rate*TANKFOLDS);
-  samplebuffer2 = (float*)malloc(sizeof(float)*rate*TANKFOLDS);
-  for (int i = 0; i < rate*TANKFOLDS; i++) {
-    samplebuffer1[i] = 0.0f;
-    samplebuffer2[i] = 0.0f;
+  amp->samplebuffer1 = (float*)malloc(sizeof(float)*amp->rate*TANKFOLDS);
+  amp->samplebuffer2 = (float*)malloc(sizeof(float)*amp->rate*TANKFOLDS);
+  for (int i = 0; i < amp->rate*TANKFOLDS; i++) {
+    amp->samplebuffer1[i] = 0.0f;
+    amp->samplebuffer2[i] = 0.0f;
   }
-  reverbimpulses = (float*)malloc(sizeof(float)*AMP_MAX_REVERB_DETAIL);
-  return malloc(  sizeof(Amplifier));
+  amp->reverbimpulses = (float*)malloc(sizeof(float)*AMP_MAX_REVERB_DETAIL);
+
+  amp->saminc1 = 0;
+  amp->saminc2 = 0;
+  amp->prevfilled1 = 0;
+  amp->prevfilled2 = 0;
+  amp->impulsesampleseperation = 0;
+
+  amp->prev_freq1 = -9999;
+  amp->prev_freq2 = -9999;
+  amp->prev_decay = -9999;
+  amp->prev_echoscale = -9999;
+  amp->prev_roomsize = -9999;
+  amp->prev_mix = -9999;
+  amp->prev_detail = -9999;
+  return amp;
 }
 
 /*****************************************************************************/
@@ -192,70 +206,70 @@ runStereoEffect(LADSPA_Handle Instance,
   fMix = *(psAmplifier->m_pfMix);
   fEchoScale = *(psAmplifier->m_pfEchoScale);
 
-  if (prev_freq1 != fTHL || prev_freq2 != fTHH){
-    for (int i = 0; i <  magResponse.length/2; i++){
+  if (psAmplifier->prev_freq1 != fTHL || psAmplifier->prev_freq2 != fTHH){
+    for (int i = 0; i <  psAmplifier->magResponse.length/2; i++){
         float vala = 0.0;
         if (i > (int)fTHL && i < (int)fTHH) vala = 1.0;
-        magResponse.asamples[i] = vala;
-        magResponse.asamples[magResponse.length - i - 1] = vala;
+        psAmplifier->magResponse.asamples[i] = vala;
+        psAmplifier->magResponse.asamples[psAmplifier->magResponse.length - i - 1] = vala;
     }
-    getFirCofficients(&magResponse, &facs, FCOUNT);
-    prev_freq1 = fTHL;
-    prev_freq2 = fTHH;
+    getFirCofficients(&psAmplifier->magResponse, &psAmplifier->facs, FCOUNT);
+    psAmplifier->prev_freq1 = fTHL;
+    psAmplifier->prev_freq2 = fTHH;
   }
 
-  if (prev_decay != fDecay || prev_echoscale != fEchoScale || prev_detail != fDetail){
+  if (psAmplifier->prev_decay != fDecay || psAmplifier->prev_echoscale != fEchoScale || psAmplifier->prev_detail != fDetail){
     for (int i = 0; i < fDetail; i++){
         float tfactd =  fEchoScale * expf(-(fDecay)*(i+1)*0.15);
-        reverbimpulses[i] = tfactd;
+        psAmplifier->reverbimpulses[i] = tfactd;
     }
-    prev_echoscale = fEchoScale;
-    prev_decay = fDecay;
+    psAmplifier->prev_echoscale = fEchoScale;
+    psAmplifier->prev_decay = fDecay;
   }
 
-  if (prev_roomsize != fRoomSize || prev_detail != fDetail){
-    impulsesampleseperation = (unsigned long)((((float)rate*TANKFOLDS)/((float)(fDetail+1) * MAX_ROOM_SIZE))* (float)fRoomSize);
-    prev_roomsize = fRoomSize;
-    prev_detail = fDetail;
+  if (psAmplifier->prev_roomsize != fRoomSize || psAmplifier->prev_detail != fDetail){
+    psAmplifier->impulsesampleseperation = (unsigned long)((((float)psAmplifier->rate*TANKFOLDS)/((float)(fDetail+1) * MAX_ROOM_SIZE))* (float)fRoomSize);
+    psAmplifier->prev_roomsize = fRoomSize;
+    psAmplifier->prev_detail = fDetail;
   }
 
   pfInput = psAmplifier->m_pfInputBuffer1;
   pfOutput = psAmplifier->m_pfOutputBuffer1;
 
   for (lSampleIndex = 0; lSampleIndex < SampleCount; lSampleIndex++){
-    if (saminc1 > rate*TANKFOLDS){
-        saminc1 = (saminc1) - rate*TANKFOLDS;
-        prevfilled1 = 1;
+    if (psAmplifier->saminc1 > psAmplifier->rate*TANKFOLDS){
+        psAmplifier->saminc1 = (psAmplifier->saminc1) - psAmplifier->rate*TANKFOLDS;
+        psAmplifier->prevfilled1 = 1;
     }
     float val1 = 0;
     for (int i=0; i < (FCOUNT-1); i++) {
-        val1 += facs[i] * ps1[i];
-        ps1[i] = ps1[i+1];
+        val1 += psAmplifier->facs[i] * psAmplifier->ps1[i];
+        psAmplifier->ps1[i] = psAmplifier->ps1[i+1];
     }
-    ps1[FCOUNT-1] = pfInput[lSampleIndex];
-    val1 += facs[FCOUNT-1]*pfInput[lSampleIndex];
+    psAmplifier->ps1[FCOUNT-1] = pfInput[lSampleIndex];
+    val1 += psAmplifier->facs[FCOUNT-1]*pfInput[lSampleIndex];
 
-    samplebuffer1[saminc1] = 0.5*val1;
+    psAmplifier->samplebuffer1[psAmplifier->saminc1] = 0.5*val1;
 
     float revfac = 0;
     for (int k=0; k < fDetail; k++) {
-        unsigned long reflectiontraceindex = k*impulsesampleseperation;
-        if (prevfilled1 == 1){
-            if (reflectiontraceindex < saminc1){
-                revfac += reverbimpulses[k]*samplebuffer1[saminc1 - reflectiontraceindex];
+        unsigned long reflectiontraceindex = k*psAmplifier->impulsesampleseperation;
+        if (psAmplifier->prevfilled1 == 1){
+            if (reflectiontraceindex < psAmplifier->saminc1){
+                revfac += psAmplifier->reverbimpulses[k]*psAmplifier->samplebuffer1[psAmplifier->saminc1 - reflectiontraceindex];
             }
             else {
-                revfac += reverbimpulses[k]*samplebuffer1[rate*TANKFOLDS-(reflectiontraceindex - saminc1)];
+                revfac += psAmplifier->reverbimpulses[k]*psAmplifier->samplebuffer1[psAmplifier->rate*TANKFOLDS-(reflectiontraceindex - psAmplifier->saminc1)];
             }
         }
         else{
-            if (reflectiontraceindex < saminc1){
-                revfac += reverbimpulses[k]*samplebuffer1[saminc1 - reflectiontraceindex];
+            if (reflectiontraceindex < psAmplifier->saminc1){
+                revfac += psAmplifier->reverbimpulses[k]*psAmplifier->samplebuffer1[psAmplifier->saminc1 - reflectiontraceindex];
             }
         }
     }
     pfOutput[lSampleIndex] = fGain* ((1.0-fMix)*pfInput[lSampleIndex] + (fMix)*revfac);
-    saminc1++;
+    psAmplifier->saminc1++;
   }
 
   pfInput = psAmplifier->m_pfInputBuffer2;
@@ -263,38 +277,38 @@ runStereoEffect(LADSPA_Handle Instance,
 
   for (lSampleIndex = 0; lSampleIndex < SampleCount; lSampleIndex++){
     float val2 = 0;
-    if (saminc2 > rate*TANKFOLDS){
-        saminc2 = (saminc2) - rate*TANKFOLDS;
-        prevfilled2 = 1;
+    if (psAmplifier->saminc2 > psAmplifier->rate*TANKFOLDS){
+        psAmplifier->saminc2 = (psAmplifier->saminc2) - psAmplifier->rate*TANKFOLDS;
+        psAmplifier->prevfilled2 = 1;
     }
     for (int i=0; i < (FCOUNT-1); i++) {
-        val2 += facs[i] * ps2[i];
-        ps2[i] = ps2[i+1];
+        val2 += psAmplifier->facs[i] * psAmplifier->ps2[i];
+        psAmplifier->ps2[i] = psAmplifier->ps2[i+1];
     }
-    ps2[FCOUNT-1] = pfInput[lSampleIndex];
-    val2 += facs[FCOUNT-1]*pfInput[lSampleIndex];
+    psAmplifier->ps2[FCOUNT-1] = pfInput[lSampleIndex];
+    val2 += psAmplifier->facs[FCOUNT-1]*pfInput[lSampleIndex];
 
-    samplebuffer2[saminc2] = 0.5*val2;
+    psAmplifier->samplebuffer2[psAmplifier->saminc2] = 0.5*val2;
 
     float revfac = 0;
     for (int k=0; k < fDetail; k++) {
-        unsigned long reflectiontraceindex = k*impulsesampleseperation;
-        if (prevfilled2 == 1){
-            if (reflectiontraceindex < saminc2){
-                revfac += reverbimpulses[k]*samplebuffer2[saminc2 - reflectiontraceindex];
+        unsigned long reflectiontraceindex = k*psAmplifier->impulsesampleseperation;
+        if (psAmplifier->prevfilled2 == 1){
+            if (reflectiontraceindex < psAmplifier->saminc2){
+                revfac += psAmplifier->reverbimpulses[k]*psAmplifier->samplebuffer2[psAmplifier->saminc2 - reflectiontraceindex];
             }
             else {
-                revfac += reverbimpulses[k]*samplebuffer2[rate*TANKFOLDS-(reflectiontraceindex - saminc2)];
+                revfac += psAmplifier->reverbimpulses[k]*psAmplifier->samplebuffer2[psAmplifier->rate*TANKFOLDS-(reflectiontraceindex - psAmplifier->saminc2)];
             }
         }
         else{
-            if (reflectiontraceindex < saminc2){
-                revfac += reverbimpulses[k]*samplebuffer2[saminc2 - reflectiontraceindex];
+            if (reflectiontraceindex < psAmplifier->saminc2){
+                revfac += psAmplifier->reverbimpulses[k]*psAmplifier->samplebuffer2[psAmplifier->saminc2 - reflectiontraceindex];
             }
         }
     }
     pfOutput[lSampleIndex] = fGain* ((1.0-fMix)*pfInput[lSampleIndex] + (fMix)*revfac);
-    saminc2++;
+    psAmplifier->saminc2++;
   }
 }
 
@@ -302,7 +316,16 @@ runStereoEffect(LADSPA_Handle Instance,
 /* Throw away an amplifier. */
 static void
 cleanupAmplifier(LADSPA_Handle Instance) {
-  free(Instance);
+  Amplifier* camp = (Amplifier*)Instance;
+  free(camp->ps1);
+  free(camp->ps2);
+  free(camp->facs);
+  free(camp->magResponse.asamples);
+  free(camp->reverbimpulses);
+  free(camp->samplebuffer1);
+  free(camp->samplebuffer2);
+  free(camp);
+
 }
 
 /*****************************************************************************/
@@ -533,11 +556,6 @@ deleteDescriptor(LADSPA_Descriptor * psDescriptor) {
     free((char **)psDescriptor->PortNames);
     free((LADSPA_PortRangeHint *)psDescriptor->PortRangeHints);
     free(psDescriptor);
-    free(facs);
-    free(magResponse.asamples);
-    free(reverbimpulses);
-    free(samplebuffer1);
-    free(samplebuffer2);
   }
 }
 /*****************************************************************************/
